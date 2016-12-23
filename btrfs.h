@@ -1,0 +1,247 @@
+#ifndef _BTRFS_PARSER_H_
+#define _BTRFS_PARSER_H_
+
+#include <stdint.h>
+#include <stddef.h>
+
+#ifndef __cardinal__
+#include <stdio.h>
+#define FD FILE*
+#else
+#define FD uint64_t
+#endif
+
+#define BTRFS_SuperblockOffset0 (64 * 1024)
+
+#define BTRFS_MagicString "_BHRfS_M"
+#define BTRFS_MagicStringLen 8
+
+#define UUID_LEN 0x10
+#define CHECKSUM_LEN 0x20
+
+typedef enum {
+	KeyType_InodeItem = 0x01,
+	KeyType_InodeRef = 0x0c,
+	KeyType_InodeExtRef = 0x0d,
+	KeyType_XAttrItem = 0x18,
+	KeyType_OrphanItem = 0x30,
+	KeyType_DirLogItem = 0x3c,
+	KeyType_DirLogIndex = 0x48,
+	KeyType_DirItem = 0x54,
+	KeyType_DirIndex = 0x60,
+	KeyType_ExtentData = 0x6c,
+	KeyType_ExtentChecksum = 0x80,
+	KeyType_RootItem = 0x84,
+	KeyType_RootBackRef = 0x90,
+	KeyType_RoofRef = 0x9c,
+	KeyType_ExtentItem = 0xa8,
+	KeyType_TreeBlockRef = 0xb0,
+	KeyType_ExtentDataRef = 0xb2,
+	KeyType_ExtentRefV0 = 0xb4,
+	KeyType_SharedBlockRef = 0xb6,
+	KeyType_SharedDataRef = 0xb8,
+	KeyType_BlockGroupItem = 0xc0,
+	KeyType_DeviceExtent = 0xcc,
+	KeyType_DeviceItem = 0xd8, 
+	KeyType_ChunkItem = 0xe4,
+	KeyType_StringItem = 0xfd,
+} BTRFS_KeyType;
+
+typedef struct {
+	uint64_t object_id;
+	uint8_t type;
+	uint64_t offset;
+} __attribute__((packed)) BTRFS_Key;
+
+typedef struct {
+	uint64_t object_id;
+	uint64_t offset;
+	uint8_t uuid[UUID_LEN];
+} __attribute__((packed)) BTRFS_Stripe;
+
+typedef struct {
+	uint64_t chunk_size_bytes;
+	uint64_t object_id;
+	uint64_t stripe_size;
+	uint64_t type;
+	uint32_t preferred_io_alignment;
+	uint32_t preferred_io_width;
+	uint32_t minimum_io_size;
+	uint16_t stripe_count;
+	uint16_t sub_stripes;
+	BTRFS_Stripe stripes[0];
+} __attribute__((packed)) BTRFS_ChunkItem;
+
+typedef struct {
+	BTRFS_Key key;
+	BTRFS_ChunkItem value;
+} BTRFS_Key_ChunkItem_Pair;
+
+typedef struct {
+	uint64_t device_id;
+	uint64_t byte_count;
+	uint64_t bytes_used;
+	uint32_t preferred_io_alignment;
+	uint32_t preferred_io_width;
+	uint32_t minimum_io_size;
+	uint64_t type;
+	uint64_t generation;
+	uint64_t start_offset;
+	uint32_t device_group;
+	uint8_t seek_speed;
+	uint8_t bandwidth;
+	uint8_t device_uuid[UUID_LEN];
+	uint8_t fs_uuid[UUID_LEN];
+} __attribute__((packed)) BTRFS_DeviceItem;
+
+typedef struct {
+	/*Checksum of the superblock*/
+	uint8_t csum[CHECKSUM_LEN];
+
+	uint8_t uuid[UUID_LEN];
+	
+	/*Physical address of this block*/
+	uint64_t cur_block_phys_addr;
+	
+	uint64_t flags;
+	
+	/*"_BHRIS_M"*/
+	char magic[8];
+	
+	uint64_t generation;
+	
+	/*Logical address of the root tree root*/
+	uint64_t root_tree_root_addr;
+	
+	/*Logical address of the chunk tree root*/
+	uint64_t chunk_tree_root_addr;
+	
+	/*Logical address of the log tree root*/
+	uint64_t log_tree_root_addr;
+	
+	uint64_t log_root_transid;
+	
+	uint64_t total_bytes;
+	
+	uint64_t bytes_used;
+	
+	uint64_t root_dir_objectid;
+	
+	uint64_t num_devices;
+	
+	uint32_t sector_size;
+	
+	uint32_t node_size;
+	
+	uint32_t leaf_size;
+	
+	uint32_t stripe_size;
+	
+	/*Length in bytes of the (KEY, CHUNK_ITEM) table at the end of the superblock*/
+	uint32_t key_chunkItem_table_len;
+	
+	uint64_t chunk_root_generation;
+	
+	uint64_t compat_flags;
+	
+	/*Only implementations that support the flags can write*/
+	uint64_t compat_ro_flags;
+	
+	/*Only implementations that support the flags can use*/
+	uint64_t inompat_flags;
+	
+	uint16_t checksum_type;
+	
+	uint8_t root_level;
+	
+	uint8_t chunk_root_level;
+	
+	uint8_t log_root_level;
+	
+	BTRFS_DeviceItem dev_item;
+	
+	char label[0x100];
+	
+	uint8_t rsv0[0x100];
+
+	/*Start of the (KEY, CHUNK_ITEM) table*/
+	uint8_t key_chunkItem_table[0];
+} __attribute__((packed)) BTRFS_Superblock;
+
+typedef struct {
+	uint64_t device_id;
+	uint64_t physical_addr;
+} BTRFS_PhysicalAddress;
+
+typedef struct {
+	uint8_t key[0x11];
+	uint64_t block_number;
+	uint64_t generation;
+} __attribute__((packed)) BTRFS_KeyPointer;
+
+typedef struct {
+	uint8_t key[0x11];
+	uint32_t data_offset;
+	uint32_t data_size;
+} __attribute__((packed)) BTRFS_ItemPointer;
+
+typedef struct {
+	uint8_t csum[CHECKSUM_LEN];
+	uint8_t uuid[UUID_LEN];
+	uint64_t logical_address;
+	uint8_t flags[7];
+	uint8_t backref_revision;
+	uint8_t chunk_tree_uuid[UUID_LEN];
+	uint64_t generation;
+	uint64_t parent_tree_id;
+	uint32_t item_count;
+	uint8_t level;
+} __attribute__((packed)) BTRFS_Header;
+
+typedef struct {
+	BTRFS_Header hdr;
+	BTRFS_KeyPointer key_ptrs[0];
+} BTRFS_InternalNode;
+
+//If the level of the node is 0, the entry is a leaf node
+typedef struct {
+	BTRFS_Header hdr;
+	BTRFS_ItemPointer item_ptrs[0];
+} BTRFS_LeafNode;
+
+///
+/// @brief      Initialize the BTRFS driver
+///
+void
+BTRFS_InitializeStructures(void);
+
+///
+/// @brief      Set the disk read handler.
+///
+/// @param[in]  handler  The handler
+///
+void
+BTRFS_SetDiskReadHandler(uint64_t (*handler)(void* buf, uint64_t off, uint64_t len));
+
+///
+/// @brief      Set the disk write handler.
+///
+/// @param[in]  handler  The handler
+///
+void
+BTRFS_SetDiskWriteHandler(uint64_t (*handler)(void* buf, uint64_t off, uint64_t len));
+
+///
+/// @brief      Retrive the superblock from the buffer after verifying it.
+///
+/// @param      buf    The buffer, from BTRFS_SuperBlockOffset0
+/// @param      block  The block
+///
+void
+BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block);
+
+int
+BTRFS_TranslateLogicalAddress(uint64_t logicalAddress, 
+							  BTRFS_PhysicalAddress *physicalAddress);
+
+#endif
