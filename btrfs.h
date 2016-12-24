@@ -54,7 +54,12 @@ typedef struct {
 } __attribute__((packed)) BTRFS_Key;
 
 typedef struct {
-	uint64_t object_id;
+	uint64_t seconds;
+	uint32_t nanoseconds;
+} __attribute__((packed)) BTRFS_Time;
+
+typedef struct {
+	uint64_t device_id;
 	uint64_t offset;
 	uint8_t uuid[UUID_LEN];
 } __attribute__((packed)) BTRFS_Stripe;
@@ -174,13 +179,13 @@ typedef struct {
 } BTRFS_PhysicalAddress;
 
 typedef struct {
-	uint8_t key[0x11];
+	BTRFS_Key key;
 	uint64_t block_number;
 	uint64_t generation;
 } __attribute__((packed)) BTRFS_KeyPointer;
 
 typedef struct {
-	uint8_t key[0x11];
+	BTRFS_Key key;
 	uint32_t data_offset;
 	uint32_t data_size;
 } __attribute__((packed)) BTRFS_ItemPointer;
@@ -209,11 +214,55 @@ typedef struct {
 	BTRFS_ItemPointer item_ptrs[0];
 } BTRFS_LeafNode;
 
+typedef struct {
+	uint64_t generation;
+	uint64_t last_transid;
+	uint64_t st_size;
+	uint64_t st_blocks;
+	uint64_t block_group;
+	uint32_t st_nlink;
+	uint32_t st_uid;
+	uint32_t st_gid;
+	uint32_t st_mode;
+	uint64_t st_rdev;
+	uint64_t flags;
+	uint64_t sequence;
+	uint8_t rsv0[0x20];
+	BTRFS_Time st_atime;
+	BTRFS_Time st_ctime;
+	BTRFS_Time st_mtime;
+	BRTFS_Time otime;
+} __attribute__((packed)) BTRFS_InodeItem;
+
+typedef struct {
+	uint64_t index;
+	uint16_t name_len;
+	char name[0];
+} BTRFS_InodeReference;
+
+typedef struct {
+	uint64_t dir_objectid;
+	uint64_t index;
+	uint16_t name_len;
+	char name[0];
+} BTRFS_InodeExtReference;
+
+typedef struct {
+	BTRFS_Key key;
+	uint64_t transid;
+	uint16_t data_size;
+	uint16_t name_len;
+	uint8_t type;
+	char name_data[0];
+} __attribute__((packed)) BTRFS_DirectoryItem;
+
+
+
 ///
 /// @brief      Initialize the BTRFS driver
 ///
 void
-BTRFS_InitializeStructures(void);
+BTRFS_InitializeStructures(int cache_size);
 
 ///
 /// @brief      Set the disk read handler.
@@ -221,7 +270,7 @@ BTRFS_InitializeStructures(void);
 /// @param[in]  handler  The handler
 ///
 void
-BTRFS_SetDiskReadHandler(uint64_t (*handler)(void* buf, uint64_t off, uint64_t len));
+BTRFS_SetDiskReadHandler(uint64_t (*handler)(void* buf, uint64_t devID, uint64_t off, uint64_t len));
 
 ///
 /// @brief      Set the disk write handler.
@@ -229,7 +278,7 @@ BTRFS_SetDiskReadHandler(uint64_t (*handler)(void* buf, uint64_t off, uint64_t l
 /// @param[in]  handler  The handler
 ///
 void
-BTRFS_SetDiskWriteHandler(uint64_t (*handler)(void* buf, uint64_t off, uint64_t len));
+BTRFS_SetDiskWriteHandler(uint64_t (*handler)(void* buf, uint64_t devID, uint64_t off, uint64_t len));
 
 ///
 /// @brief      Retrive the superblock from the buffer after verifying it.

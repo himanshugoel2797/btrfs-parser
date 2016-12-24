@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 /* CRC-32C (iSCSI) polynomial in reversed bit order. */
 #define POLY 0x82f63b78
@@ -68,57 +69,150 @@ static uint32_t crc32c_sw(uint32_t crci, const void *buf, size_t len)
     return (uint32_t)crc ^ 0xffffffff;
 }
 
-typedef struct {
-	uint64_t VirtualAddress;
-	uint64_t PhysicalAddress;
-	uint64_t Length;
-	int64_t LastUsed;
-} BTRFS_Mapping;
-
-#define TRANSLATION_CACHE_SIZE (32 * 1024)
-#define MAX_AGE 16
-static int64_t CurrentAge = 0;
-static int CacheSearchStartIndex = 0;
-static BTRFS_Mapping *mapping_cache = NULL;
+static uint64_t ***chunk_tree_root[512];
 
 static BTRFS_Superblock superblock;
 
-static uint64_t (*write_handler)(void* buf, uint64_t off, uint64_t len);
-static uint64_t (*read_handler)(void* buf, uint64_t off, uint64_t len);
+static uint64_t (*write_handler)(void* buf, uint64_t devID, uint64_t off, uint64_t len);
+static uint64_t (*read_handler)(void* buf, uint64_t devID, uint64_t off, uint64_t len);
+
+#define L4_LEVEL_SIZE (512 * 1024 * 1024 * 1024ull)
+#define L3_LEVEL_SIZE (1 * 1024 * 1024 * 1024ull)
+#define L2_LEVEL_SIZE (2 * 1024 * 1024ull)
+#define L1_LEVEL_SIZE (4 * 1024ull)
 
 void
-BTRFS_InitializeStructures(void) {
+BTRFS_InitializeStructures(int cache_size) {
 	crc32c_init_sw();
 
-	mapping_cache = malloc(sizeof(BTRFS_Mapping) * TRANSLATION_CACHE_SIZE);
-	memset(mapping_cache, 0, sizeof(BTRFS_Mapping) * TRANSLATION_CACHE_SIZE);
+	memset(chunk_tree_root, 0, 512 * sizeof(uint64_t));
 }
 
 void
-BTRFS_AddMappingToCache(uint64_t vAddr, uint64_t pAddr, uint64_t len) {
+BTRFS_AddMappingToCache(uint64_t vAddr, uint64_t deviceID, uint64_t pAddr, uint64_t len) {
 
-	for(uint64_t c = 0; c < TRANSLATION_CACHE_SIZE; c++) {
-		uint64_t i = (CacheSearchStartIndex + c) % TRANSLATION_CACHE_SIZE;
 
-		if(mapping_cache[i].LastUsed < CurrentAge - MAX_AGE) {
-			mapping_cache[i].VirtualAddress = vAddr;
-			mapping_cache[i].PhysicalAddress = pAddr;
-			mapping_cache[i].Length = len;
-			mapping_cache[i].LastUsed = CurrentAge;
-			CacheSearchStartIndex++;
-			break;
+	if(vAddr % 4096)
+		return;
+
+	if(pAddr % 4096)
+		return;
+
+	if(len % 4096)
+		return;
+
+
+	if(len != L4_LEVEL_SIZE && len != L3_LEVEL_SIZE && len != L2_LEVEL_SIZE && len != L1_LEVEL_SIZE) {
+
+		while(len > 0) {
+
+			if(len >= L4_LEVEL_SIZE){
+
+				BTRFS_AddMappingToCache(vAddr, deviceID, pAddr, L4_LEVEL_SIZE);
+
+				len -= L4_LEVEL_SIZE;
+				vAddr += L4_LEVEL_SIZE;
+				pAddr += L4_LEVEL_SIZE;
+			}else if(len >= L3_LEVEL_SIZE){
+
+				BTRFS_AddMappingToCache(vAddr, deviceID, pAddr, L3_LEVEL_SIZE);
+
+				len -= L3_LEVEL_SIZE;
+				vAddr += L3_LEVEL_SIZE;
+				pAddr += L3_LEVEL_SIZE;
+			}else if(len >= L2_LEVEL_SIZE){
+
+				BTRFS_AddMappingToCache(vAddr, deviceID, pAddr, L2_LEVEL_SIZE);
+
+				len -= L2_LEVEL_SIZE;
+				vAddr += L2_LEVEL_SIZE;
+				pAddr += L2_LEVEL_SIZE;
+			}else if(len >= L1_LEVEL_SIZE){
+
+				BTRFS_AddMappingToCache(vAddr, deviceID, pAddr, L1_LEVEL_SIZE);
+
+				len -= L1_LEVEL_SIZE;
+				vAddr += L1_LEVEL_SIZE;
+				pAddr += L1_LEVEL_SIZE;
+			}
+
+		}
+
+		return;
+	}
+
+	uint32_t l4_i = (vAddr >> 39);
+	uint32_t l3_i = (vAddr >> 30) & 0x1FF;
+	uint32_t l2_i = (vAddr >> 21) & 0x1FF;
+	uint32_t l1_i = (vAddr >> 12) & 0x1FF;
+
+	if(chunk_tree_root[l4_i] == 0){
+		if(len != L4_LEVEL_SIZE){
+			chunk_tree_root[l4_i] = malloc(sizeof(uint64_t) * 512);
+			memset(chunk_tree_root[l4_i], 0, 512 * sizeof(uint64_t));
+		}else
+		{
+			chunk_tree_root[l4_i] = (uint64_t***)(pAddr | 1);
+			return;
 		}
 	}
+
+	if(chunk_tree_root[l4_i][l3_i] == 0){
+		if(len != L3_LEVEL_SIZE){
+			chunk_tree_root[l4_i][l3_i] = malloc(sizeof(uint64_t) * 512);
+			memset(chunk_tree_root[l4_i][l3_i], 0, 512 * sizeof(uint64_t));
+		}else
+		{
+			chunk_tree_root[l4_i][l3_i] = (uint64_t**)(pAddr | 1);
+			return;
+		}
+	}
+
+	if(chunk_tree_root[l4_i][l3_i][l2_i] == 0){
+		if(len != L2_LEVEL_SIZE){
+			chunk_tree_root[l4_i][l3_i][l2_i] = malloc(sizeof(uint64_t) * 512);
+			memset(chunk_tree_root[l4_i][l3_i][l2_i], 0, 512 * sizeof(uint64_t));
+		}else
+		{
+			chunk_tree_root[l4_i][l3_i][l2_i] = (uint64_t*)(pAddr | 1);
+			return;
+		}
+	}
+
+	chunk_tree_root[l4_i][l3_i][l2_i][l1_i] = pAddr | 1;
 }
 
 void
-BTRFS_SetDiskReadHandler(uint64_t (*handler)(void* buf, uint64_t off, uint64_t len)) {
+BTRFS_SetDiskReadHandler(uint64_t (*handler)(void* buf, uint64_t devID, uint64_t off, uint64_t len)) {
 	read_handler = handler;
 }
 
 void
-BTRFS_SetDiskWriteHandler(uint64_t (*handler)(void* buf, uint64_t off, uint64_t len)) {
+BTRFS_SetDiskWriteHandler(uint64_t (*handler)(void* buf, uint64_t devID, uint64_t off, uint64_t len)) {
 	write_handler = handler;
+}
+
+uint64_t
+BTRFS_Read(void *buf, uint64_t logicalAddr, uint64_t len) {
+	BTRFS_PhysicalAddress p_addr;
+	if(BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0)
+		return -1;
+
+	//Read into an array of 4MiB pages.
+	printf("V:%lx:P:%lx\n", logicalAddr, p_addr.physical_addr);
+
+	return read_handler(buf, p_addr.device_id, p_addr.physical_addr, len);
+}
+
+uint64_t
+BTRFS_Write(void *buf, uint64_t logicalAddr, uint64_t len) {
+	BTRFS_PhysicalAddress p_addr;
+	if(BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0)
+		return -1;
+
+	//Update the cache if needed, then push the changes
+
+	return write_handler(buf, p_addr.device_id, p_addr.physical_addr, len);	
 }
 
 void
@@ -126,7 +220,7 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 
 	crc32c_init_sw();
 
-	BTRFS_Superblock sblock = (BTRFS_Superblock*)buf;
+	BTRFS_Superblock *sblock = (BTRFS_Superblock*)buf;
 
 	//Start by verifying the checksum
 	uint32_t crc = 0;
@@ -153,6 +247,7 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 	//Copy the superblock into a backup table
 	memcpy(&superblock, sblock, sizeof(BTRFS_Superblock));
 
+
 	//Fill the btrfs translation cache
 	uint64_t table_bytes = sblock->key_chunkItem_table_len;
 	BTRFS_Key_ChunkItem_Pair *mapping = (BTRFS_Key_ChunkItem_Pair*)sblock->key_chunkItem_table;
@@ -164,7 +259,7 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 
 		for(int i = 0; i < stripe_cnt; i++)
 		{
-			BTRFS_AddMappingToCache(logical_addr, mapping->value.stripes[i].offset, mapping->value.stripe_size);
+			BTRFS_AddMappingToCache(logical_addr, mapping->value.stripes[i].device_id, mapping->value.stripes[i].offset, mapping->value.stripe_size);
 			logical_addr += mapping->value.stripe_size;
 		}
 
@@ -173,7 +268,38 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 		mapping = (BTRFS_Key_ChunkItem_Pair*)((uint8_t*)mapping + sz);
 	}
 
-	//Use the current allocation cache to parse and save as much of the chunk tree as possible.
+	BTRFS_Header chunk_tree;
+	BTRFS_Read(&chunk_tree, sblock->chunk_tree_root_addr, sizeof(BTRFS_Header));
+
+	//Fill the chunk cache
+	uint64_t header_end_addr = sblock->chunk_tree_root_addr + sizeof(BTRFS_Header);
+	uint64_t leaf_node_addr = header_end_addr;
+	for(int i = 0; i < chunk_tree.item_count; i++) {
+
+		BTRFS_ItemPointer chunk_entry;
+		BTRFS_Read(&chunk_entry, leaf_node_addr, sizeof(BTRFS_ItemPointer));
+
+		if(chunk_entry.key.type == KeyType_DeviceItem){
+
+		}else if(chunk_entry.key.type == KeyType_ChunkItem) {
+
+			BTRFS_ChunkItem *chunk_item = malloc(chunk_entry.data_size);
+			BTRFS_Read(chunk_item, header_end_addr + chunk_entry.data_offset, chunk_entry.data_size);
+
+			uint64_t logical_addr = chunk_entry.key.offset;
+			for(int j = 0; j < chunk_item->stripe_count; j++){
+
+				BTRFS_AddMappingToCache(logical_addr, chunk_item->stripes[j].device_id, chunk_item->stripes[j].offset, chunk_item->stripe_size);
+				logical_addr += chunk_item->stripe_size;
+
+			}
+
+			free(chunk_item);
+		}
+
+		leaf_node_addr += sizeof(BTRFS_ItemPointer);
+	}
+
 }
 
 int
@@ -182,4 +308,46 @@ BTRFS_TranslateLogicalAddress(uint64_t logicalAddress,
 
 	//Walk the chunk tree to translate the provided address
 
+	uint32_t l4_i = (logicalAddress >> 39);
+	uint32_t l3_i = (logicalAddress >> 30) & 0x1FF;
+	uint32_t l2_i = (logicalAddress >> 21) & 0x1FF;
+	uint32_t l1_i = (logicalAddress >> 12) & 0x1FF;
+
+	if((uint64_t)chunk_tree_root[l4_i] == 0)
+		return -1;
+
+	if((uint64_t)chunk_tree_root[l4_i] & 1){
+		physicalAddress->physical_addr = (uint64_t)chunk_tree_root[l4_i] & ~1;
+		physicalAddress->physical_addr += (logicalAddress % L4_LEVEL_SIZE);
+		return 0;
+	}
+
+	if((uint64_t)chunk_tree_root[l4_i][l3_i] == 0)
+		return -1;
+
+	if((uint64_t)chunk_tree_root[l4_i][l3_i] & 1){
+		physicalAddress->physical_addr = (uint64_t)chunk_tree_root[l4_i][l3_i] & ~1;
+		physicalAddress->physical_addr += (logicalAddress % L3_LEVEL_SIZE);
+		return 0;
+	}
+
+	if((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i] == 0)
+		return -1;
+
+	if((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i] & 1){
+		physicalAddress->physical_addr = (uint64_t)chunk_tree_root[l4_i][l3_i][l2_i] & ~1;
+		physicalAddress->physical_addr += (logicalAddress % L2_LEVEL_SIZE);
+		return 0;
+	}
+
+	if((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i][l1_i] == 0)
+		return -1;
+
+	if((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i][l1_i] & 1){
+		physicalAddress->physical_addr = (uint64_t)chunk_tree_root[l4_i][l3_i][l2_i][l1_i] & ~1;
+		physicalAddress->physical_addr += (logicalAddress % L1_LEVEL_SIZE);
+		return 0;
+	}
+
+	return -1;
 }
