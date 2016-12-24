@@ -268,38 +268,34 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 		mapping = (BTRFS_Key_ChunkItem_Pair*)((uint8_t*)mapping + sz);
 	}
 
-	BTRFS_Header chunk_tree;
-	BTRFS_Read(&chunk_tree, sblock->chunk_tree_root_addr, sizeof(BTRFS_Header));
-
+	BTRFS_Header *chunk_tree = malloc(sblock->node_size);
+	BTRFS_Read(chunk_tree, sblock->chunk_tree_root_addr, sblock->node_size);
+	
+	crc = crc32c_sw(0, chunk_tree->uuid, sblock->node_size - 0x20);
+	expected_csum = *(uint32_t*)(chunk_tree->csum);
+	
 	//Fill the chunk cache
-	uint64_t header_end_addr = sblock->chunk_tree_root_addr + sizeof(BTRFS_Header);
-	uint64_t leaf_node_addr = header_end_addr;
-	for(int i = 0; i < chunk_tree.item_count; i++) {
+	BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(chunk_tree + 1);
 
-		BTRFS_ItemPointer chunk_entry;
-		BTRFS_Read(&chunk_entry, leaf_node_addr, sizeof(BTRFS_ItemPointer));
+	for(int i = 0; i < chunk_tree->item_count; i++) {
 
-		if(chunk_entry.key.type == KeyType_DeviceItem){
+		if(chunk_entry->key.type == KeyType_DeviceItem){
 
-		}else if(chunk_entry.key.type == KeyType_ChunkItem) {
+		}else if(chunk_entry->key.type == KeyType_ChunkItem) {
 
-			BTRFS_ChunkItem *chunk_item = malloc(chunk_entry.data_size);
-			BTRFS_Read(chunk_item, header_end_addr + chunk_entry.data_offset, chunk_entry.data_size);
+			BTRFS_ChunkItem *chunk_item = (BTRFS_ChunkItem*)((uint8_t*)chunk_tree + sizeof(BTRFS_Header) + chunk_entry->data_offset);
 
-			uint64_t logical_addr = chunk_entry.key.offset;
+			uint64_t logical_addr = chunk_entry->key.offset;
 			for(int j = 0; j < chunk_item->stripe_count; j++){
-
 				BTRFS_AddMappingToCache(logical_addr, chunk_item->stripes[j].device_id, chunk_item->stripes[j].offset, chunk_item->stripe_size);
 				logical_addr += chunk_item->stripe_size;
-
 			}
-
-			free(chunk_item);
 		}
 
-		leaf_node_addr += sizeof(BTRFS_ItemPointer);
+		chunk_entry++;
 	}
 
+	free(chunk_tree);
 }
 
 int

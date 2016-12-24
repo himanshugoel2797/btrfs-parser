@@ -231,7 +231,7 @@ typedef struct {
 	BTRFS_Time st_atime;
 	BTRFS_Time st_ctime;
 	BTRFS_Time st_mtime;
-	BRTFS_Time otime;
+	BTRFS_Time otime;
 } __attribute__((packed)) BTRFS_InodeItem;
 
 typedef struct {
@@ -256,7 +256,29 @@ typedef struct {
 	char name_data[0];
 } __attribute__((packed)) BTRFS_DirectoryItem;
 
+typedef struct {
+	uint64_t end_offset;
+} BTRFS_LogItem;
 
+typedef BTRFS_LogItem BTRFS_DirectoryLogIndex;
+typedef BTRFS_DirectoryItem BTRFS_DirectoryIndex;
+
+typedef struct {
+	uint64_t generation;
+	uint64_t decoded_size;
+	uint8_t compression_type;
+	uint8_t encryption_present;
+	uint16_t other_encoding;
+	uint8_t type;
+} __attribute__((packed)) BTRFS_ExtentDataInline;
+
+typedef struct {
+	BTRFS_ExtentDataInline inlineData;
+	uint64_t extent_logical_addr;
+	uint64_t extent_size;
+	uint64_t extent_offset;
+	uint64_t logical_byte_count;
+} __attribute__((packed)) BTRFS_ExtentDataFull;
 
 ///
 /// @brief      Initialize the BTRFS driver
