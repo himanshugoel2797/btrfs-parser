@@ -47,6 +47,13 @@ typedef enum {
 	KeyType_StringItem = 0xfd,
 } BTRFS_KeyType;
 
+typedef enum {
+	ReservedObjectID_ExtentTree = 0x02,
+	ReservedObjectID_DevTree = 0x04,
+	ReservedObjectID_FSTree = 0x05,
+	ReservedObjectID_ChecksumTree = 0x07,
+} BTRFS_ReservedObjectID;
+
 typedef struct {
 	uint64_t object_id;
 	uint8_t type;
@@ -279,6 +286,30 @@ typedef struct {
 	uint64_t extent_offset;
 	uint64_t logical_byte_count;
 } __attribute__((packed)) BTRFS_ExtentDataFull;
+
+typedef struct {
+	BTRFS_InodeItem inode;
+	uint64_t expected_generation;
+	uint64_t tree_root_object_id;
+	uint64_t root_block_num;
+	uint64_t byte_limit;
+	uint64_t bytes_used;
+	uint64_t last_snapshot_generation;
+	uint64_t flags;
+	uint32_t reference_count;
+	BTRFS_Key drop_progress;
+	uint8_t drop_level;
+	uint8_t level;
+} __attribute__((packed)) BTRFS_RootItem;
+
+typedef struct {
+	uint64_t dir_objectid;
+	uint64_t index;
+	uint16_t name_len;
+	char name[0];
+} BTRFS_RootReference;
+
+typedef BTRFS_RootReference BTRFS_RootBackReference;
 
 ///
 /// @brief      Initialize the BTRFS driver
