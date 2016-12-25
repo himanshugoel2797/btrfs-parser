@@ -60,6 +60,12 @@ typedef enum {
 	DirectoryItemType_Directory = 2,
 } BTRFS_DirectoryItemType;
 
+typedef enum {
+	ExtentDataType_Inline = 0,
+	ExtentDataType_Regular = 1,
+	ExtentDataType_Prealloc = 2,
+} BTRFS_ExtentDataType;
+
 typedef struct {
 	uint64_t object_id;
 	uint8_t type;

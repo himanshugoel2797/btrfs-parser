@@ -109,8 +109,6 @@ BTRFS_AddMappingToCache(uint64_t vAddr, uint64_t deviceID, uint64_t pAddr, uint6
 
 	if(len != L4_LEVEL_SIZE && len != L3_LEVEL_SIZE && len != L2_LEVEL_SIZE && len != L1_LEVEL_SIZE) {
 
-		printf("Add V:%lx P:%lx S:%lx\n", vAddr, pAddr, len);
-
 		while(len > 0) {
 
 			if(len >= L4_LEVEL_SIZE){
@@ -330,8 +328,6 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, char *file_path)
 		if(path_end == NULL)path_end = strchr(file_path, 0);
 		uint32_t name_hash = ~crc32c_sw(~1, file_path, path_end - file_path);
 
-		printf("Desired Hash: %x\n", name_hash);
-
 		//Fill the chunk cache
 		BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(parent + 1);
 
@@ -340,49 +336,84 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, char *file_path)
 			switch(chunk_entry->key.type) {
 				case KeyType_InodeItem:
 				{
-					BTRFS_ItemPointer *inode_ref_ptr = chunk_entry + 1;
-					BTRFS_InodeItem *inode_item = (BTRFS_InodeItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
-					BTRFS_InodeReference *inode_ref = (BTRFS_InodeReference*)((uint8_t*)parent + sizeof(BTRFS_Header) + inode_ref_ptr->data_offset);
+					BTRFS_InodeItem *inode_item = (BTRFS_InodeItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[0].data_offset);
+					BTRFS_InodeReference *inode_ref = (BTRFS_InodeReference*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[1].data_offset);
 
+					uint32_t desired_index = 0;
+
+					int j = 2;
+					for(; j < parent->item_count && chunk_entry[j].key.type != KeyType_InodeItem; j++) {
+
+						switch(chunk_entry[j].key.type) {
+							case KeyType_DirItem:
+							{
+								static uint32_t dir_item_index = 0;
+
+								if(chunk_entry[j].key.offset == name_hash) {
+									desired_index = dir_item_index;
+									
+									BTRFS_DirectoryItem *dir_item = (BTRFS_DirectoryItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[j].data_offset);
+									printf("Dir Item Name: \"%.*s\" Data Size: %hx\n", dir_item->name_len, dir_item->name_data, dir_item->data_size);
+								}
+
+								dir_item_index++;
+							}
+							break;
+							case KeyType_XAttrItem:
+							{
+
+							}
+							break;
+							case KeyType_DirIndex:
+							{
+								static uint32_t dir_index_index = 0;
+
+								if(desired_index == dir_index_index) {
+									BTRFS_DirectoryIndex *dir_item = (BTRFS_DirectoryIndex*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[j].data_offset);
+									printf("Dir Index Name: \"%.*s\" Index: %lx\n", dir_item->name_len, dir_item->name_data, chunk_entry[j].key.offset);
+								}
+
+								dir_index_index++;
+							}
+							break;
+							case KeyType_ExtentData:
+							{
+								static uint32_t extent_index = 0;
+
+								if(desired_index == extent_index) {
+									BTRFS_ExtentDataInline *extent_data_inline = (BTRFS_ExtentDataInline*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[j].data_offset);
+									
+									if(extent_data_inline->type == ExtentDataType_Inline) {
+
+										printf("Extent Data Size: %lx Type: %hhx\n", extent_data_inline->decoded_size, extent_data_inline->type);
+
+									} else if(extent_data_inline->type == ExtentDataType_Regular) {
+										BTRFS_ExtentDataFull *extent_data_reg = (BTRFS_ExtentDataFull*)extent_data_inline;
+
+										printf("Data Location:%lx\n", extent_data_reg->extent_logical_addr);
+
+									}
+								}
+
+								extent_index++;
+							}
+							break;
+						}
+					}
+
+					i = j;
+
+					if(chunk_entry->key.offset == name_hash){
+						BTRFS_DirectoryItem *dir_item = (BTRFS_DirectoryItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
+
+						BTRFS_DirectoryIndex *dir_index = (BTRFS_DirectoryIndex*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[1].data_offset);
+
+						printf("Dir Name: %.*s\n", dir_item->name_len, dir_item->name_data);
+						printf("Offset: %lx Index: %lx\n\n", dir_item->key.object_id, chunk_entry[1].key.offset);
+					}
 					//printf("Inode Item\n");
 					//printf("Inode Name: %.*s\n", inode_ref->name_len, inode_ref->name);
 				}
-				break;
-				case KeyType_InodeRef:
-				{
-
-				}
-				break;
-				case KeyType_DirItem:
-				{
-					BTRFS_DirectoryItem *dir_item = (BTRFS_DirectoryItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
-
-					uint32_t name0_hash = ~crc32c_sw(~1, dir_item->name_data, dir_item->name_len);
-					
-					printf("Hash: %lx\n", chunk_entry->key.offset);
-					printf("Desired Hash: %x\n", name0_hash);
-					printf("Dir Name: %.*s\n", dir_item->name_len, dir_item->name_data);
-				}
-				break;
-				case KeyType_XAttrItem:
-				{
-
-				}
-				break;
-				case KeyType_DirIndex:
-				{
-					BTRFS_DirectoryIndex *dir_item = (BTRFS_DirectoryIndex*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
-
-					//printf("Dir Index Name: %.*s Index: %lx\n", dir_item->name_len, dir_item->name_data, chunk_entry->key.offset);
-				}
-				break;
-				case KeyType_ExtentData:
-				{
-					//printf("Extent Data\n");
-				}
-				break;
-				default:
-					printf("Key Type: %hhx\n", chunk_entry->key.type);
 				break;
 			}
 
@@ -526,7 +557,7 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 	free(chunk_tree);
 
 	BTRFS_ParseRootTree();
-	BTRFS_ParseFullFSTree("wallpaper.png");
+	BTRFS_ParseFullFSTree("test/wallpaper2.png");
 }
 
 int
