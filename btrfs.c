@@ -218,7 +218,6 @@ BTRFS_Read(void *buf, uint64_t logicalAddr, uint64_t len) {
 		return -1;
 
 	//Read into an array of 4MiB pages.
-	printf("Read V:%lx:P:%lx\n", logicalAddr, p_addr.physical_addr);
 
 	return read_handler(buf, p_addr.device_id, p_addr.physical_addr, len);
 }
@@ -298,47 +297,173 @@ BTRFS_FillChunkTreeCache(BTRFS_Header *parent)
 	}
 }
 
-void
-BTRFS_ParseRootTree(void)
+void*
+BTRFS_GetNodePointer(BTRFS_Header *parent, BTRFS_KeyType type, int base_index, int index)
 {
-		BTRFS_Header *children = malloc(superblock.node_size);
-		if(BTRFS_GetNode(children, superblock.root_tree_root_addr) != 0) {
-			printf("Root Tree Checksum does not match!\n");
-			return;
-		}
-	
-		BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(children + 1);
+	if(parent->level != 0)
+		return NULL;
 
-		for(int i = 0; i < children->item_count; i++) {
-	
-			if(chunk_entry->key.type == KeyType_RootItem) {
-				BTRFS_RootItem *root_item = (BTRFS_RootItem*)((uint8_t*)children + sizeof(BTRFS_Header) + chunk_entry->data_offset);
+	BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(parent + 1);
 
-				//Root items refer to tree types.
-				switch(chunk_entry->key.object_id){
-					case ReservedObjectID_ExtentTree:
-						extent_tree_loc = root_item->root_block_num;
-						printf("Extent Tree\n");
-					break;
-					case ReservedObjectID_DevTree:
-						dev_tree_loc = root_item->root_block_num;
-						printf("Dev Tree\n");
-					break;
-					case ReservedObjectID_FSTree:
-						fs_tree_loc = root_item->root_block_num;
-						printf("FS Tree\n");
-					break;
-					case ReservedObjectID_ChecksumTree:
-						checksum_tree_loc = root_item->root_block_num;
-						printf("Checksum Tree\n");
-					break;
+	int match_cnt = 0;
+	for(int i = base_index; i < parent->item_count; i++) {
+
+		if(chunk_entry->key.type == type && match_cnt == index)
+			return ((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset); 
+
+		if(chunk_entry->key.type == type)
+			match_cnt++;
+
+		chunk_entry++;
+	}
+
+	return NULL;
+}
+
+void
+BTRFS_TraverseFullFSTree(BTRFS_Header *parent, char *file_path)
+{
+	if(parent->level == 0)
+	{
+		//Calculate the hash of the next piece of the path
+		char *path_end = strchr(file_path, '/');
+		if(path_end == NULL)path_end = strchr(file_path, 0);
+		uint32_t name_hash = crc32c_sw(0, file_path, path_end - file_path);
+
+		printf("Desired Hash: %x\n", name_hash);
+
+		//Fill the chunk cache
+		BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(parent + 1);
+
+		for(int i = 0; i < parent->item_count; i++) {
+
+			switch(chunk_entry->key.type) {
+				case KeyType_InodeItem:
+				{
+					BTRFS_ItemPointer *inode_ref_ptr = chunk_entry + 1;
+					BTRFS_InodeItem *inode_item = (BTRFS_InodeItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
+					BTRFS_InodeReference *inode_ref = (BTRFS_InodeReference*)((uint8_t*)parent + sizeof(BTRFS_Header) + inode_ref_ptr->data_offset);
+
+					//printf("Inode Item\n");
+					//printf("Inode Name: %.*s\n", inode_ref->name_len, inode_ref->name);
 				}
+				break;
+				case KeyType_InodeRef:
+				{
+
+				}
+				break;
+				case KeyType_DirItem:
+				{
+
+
+					BTRFS_DirectoryItem *dir_item = (BTRFS_DirectoryItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
+
+					uint32_t name0_hash = crc32c_sw(0, dir_item->name_data, dir_item->name_len);
+
+					printf("Hash: %lx\n", chunk_entry->key.offset);
+					printf("Desired Hash: %x\n", name0_hash);
+					printf("Dir Name: %.*s\n", dir_item->name_len, dir_item->name_data);
+				}
+				break;
+				case KeyType_XAttrItem:
+				{
+
+				}
+				break;
+				case KeyType_DirIndex:
+				{
+					BTRFS_DirectoryIndex *dir_item = (BTRFS_DirectoryIndex*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
+
+					//printf("Dir Index Name: %.*s Index: %lx\n", dir_item->name_len, dir_item->name_data, chunk_entry->key.offset);
+				}
+				break;
+				case KeyType_ExtentData:
+				{
+					//printf("Extent Data\n");
+				}
+				break;
+				default:
+					printf("Key Type: %hhx\n", chunk_entry->key.type);
+				break;
 			}
 
 			chunk_entry++;
 		}
 
+	}else
+	{
+		//Visit all of this node's children
+		
+		BTRFS_Header *children = malloc(superblock.node_size);
+
+		BTRFS_KeyPointer *key_ptr = (BTRFS_KeyPointer*)(parent + 1);
+
+		for(uint64_t i = 0; i < parent->item_count; i++){
+
+			if(BTRFS_GetNode(children, key_ptr->block_number) != 0) {
+				printf("Chunk Tree Checksum does not match!\n");
+				return;
+			}
+
+			printf("Level Traversal\n");
+			BTRFS_TraverseFullFSTree(children, file_path);
+
+			key_ptr++;
+		}
+
 		free(children);
+	}
+}
+
+void
+BTRFS_ParseFullFSTree(char *path)
+{
+	BTRFS_Header *children = malloc(superblock.node_size);
+	if(BTRFS_GetNode(children, fs_tree_loc) != 0) {
+		printf("Root Tree Checksum does not match!\n");
+		return;
+	}
+
+	BTRFS_TraverseFullFSTree(children, path);
+}
+
+void
+BTRFS_ParseRootTree(void)
+{
+	BTRFS_Header *children = malloc(superblock.node_size);
+	if(BTRFS_GetNode(children, superblock.root_tree_root_addr) != 0) {
+		printf("Root Tree Checksum does not match!\n");
+		return;
+	}
+	
+	BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(children + 1);
+
+	for(int i = 0; i < children->item_count; i++) {
+	
+		if(chunk_entry->key.type == KeyType_RootItem) {
+			BTRFS_RootItem *root_item = (BTRFS_RootItem*)((uint8_t*)children + sizeof(BTRFS_Header) + chunk_entry->data_offset);
+
+			//Root items refer to tree types.
+			switch(chunk_entry->key.object_id){
+				case ReservedObjectID_ExtentTree:
+					extent_tree_loc = root_item->root_block_num;
+				break;
+				case ReservedObjectID_DevTree:
+					dev_tree_loc = root_item->root_block_num;
+				break;
+				case ReservedObjectID_FSTree:
+					fs_tree_loc = root_item->root_block_num;
+				break;
+				case ReservedObjectID_ChecksumTree:
+					checksum_tree_loc = root_item->root_block_num;
+				break;
+			}
+		}
+		chunk_entry++;
+	}
+
+	free(children);
 }
 
 void
@@ -403,6 +528,7 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 	free(chunk_tree);
 
 	BTRFS_ParseRootTree();
+	BTRFS_ParseFullFSTree("wallpaper.png");
 }
 
 int

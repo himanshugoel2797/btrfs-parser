@@ -54,6 +54,12 @@ typedef enum {
 	ReservedObjectID_ChecksumTree = 0x07,
 } BTRFS_ReservedObjectID;
 
+typedef enum {
+	DirectoryItemType_Unknown = 0,
+	DirectoryItemType_File = 1,
+	DirectoryItemType_Directory = 2,
+} BTRFS_DirectoryItemType;
+
 typedef struct {
 	uint64_t object_id;
 	uint8_t type;
@@ -262,6 +268,8 @@ typedef struct {
 	uint8_t type;
 	char name_data[0];
 } __attribute__((packed)) BTRFS_DirectoryItem;
+
+typedef BTRFS_DirectoryItem BTRFS_ExtendedAttributeItem;
 
 typedef struct {
 	uint64_t end_offset;
