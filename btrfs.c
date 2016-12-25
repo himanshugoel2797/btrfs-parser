@@ -44,7 +44,7 @@ static uint32_t crc32c_sw(uint32_t crci, const void *buf, size_t len)
     const unsigned char *next = buf;
     uint64_t crc;
 
-    crc = crci ^ 0xffffffff;
+    crc = crci;// ^ 0xffffffff;
     while (len && ((uintptr_t)next & 7) != 0) {
         crc = crc32c_table[0][(crc ^ *next++) & 0xff] ^ (crc >> 8);
         len--;
@@ -238,7 +238,7 @@ BTRFS_GetNode(void *buf, uint64_t logicalAddr) {
 	BTRFS_Header *chunk_tree = buf;
 	BTRFS_Read(chunk_tree, logicalAddr, superblock.node_size);
 	
-	uint32_t crc = crc32c_sw(0, chunk_tree->uuid, superblock.node_size - 0x20);
+	uint32_t crc = crc32c_sw(-1, chunk_tree->uuid, superblock.node_size - 0x20);
 	uint32_t expected_csum = *(uint32_t*)(chunk_tree->csum);
 	
 	if(crc != expected_csum)
@@ -328,7 +328,7 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, char *file_path)
 		//Calculate the hash of the next piece of the path
 		char *path_end = strchr(file_path, '/');
 		if(path_end == NULL)path_end = strchr(file_path, 0);
-		uint32_t name_hash = crc32c_sw(0, file_path, path_end - file_path);
+		uint32_t name_hash = ~crc32c_sw(~1, file_path, path_end - file_path);
 
 		printf("Desired Hash: %x\n", name_hash);
 
@@ -355,12 +355,10 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, char *file_path)
 				break;
 				case KeyType_DirItem:
 				{
-
-
 					BTRFS_DirectoryItem *dir_item = (BTRFS_DirectoryItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
 
-					uint32_t name0_hash = crc32c_sw(0, dir_item->name_data, dir_item->name_len);
-
+					uint32_t name0_hash = ~crc32c_sw(~1, dir_item->name_data, dir_item->name_len);
+					
 					printf("Hash: %lx\n", chunk_entry->key.offset);
 					printf("Desired Hash: %x\n", name0_hash);
 					printf("Dir Name: %.*s\n", dir_item->name_len, dir_item->name_data);
@@ -475,7 +473,7 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 
 	//Start by verifying the checksum
 	uint32_t crc = 0;
-	crc = crc32c_sw(0, sblock->uuid, 0x1000 - 0x20);
+	crc = crc32c_sw(-1, sblock->uuid, 0x1000 - 0x20);
 
 	uint32_t expected_csum = *(uint32_t*)(&sblock->csum);
 
