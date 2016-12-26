@@ -17,24 +17,19 @@ uint64_t disk_write(void* buf, uint64_t devID, uint64_t off, uint64_t len) {
 
 int main(int argc, char *argv[]){
 
-	fd = fopen(argv[1], "rb");
+	uint8_t *buf = malloc(0x1000);
 
-	uint8_t *buf = malloc(1024 * 1024);
-	fread(buf, 1, 1024 * 1024, fd);
+	fd = fopen(argv[1], "rb");
+	fseek(fd, 0x1000, SEEK_SET);
+	fread(buf, 1, 0x1000, fd);
 
 	BTRFS_InitializeStructures(32 * 1024);
 	BTRFS_SetDiskReadHandler(disk_read);
 	BTRFS_SetDiskWriteHandler(disk_write);
 
-	BTRFS_Superblock *sblock = NULL;
-	BTRFS_ParseSuperblock(buf + BTRFS_SuperblockOffset0, &sblock);
+	BTRFS_StartParser(buf);
 
-	if(sblock == NULL) {
-		printf("Bad superblock\n");
-		return 0;
-	}
-
-	printf("Label:%s\n", sblock->label);
+	free(buf);
 
 	//Build an actual mapping table to translate logical addresses
 	//Use it to walk the chunk tree

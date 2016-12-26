@@ -1,77 +1,12 @@
 #include "btrfs.h"
+#include "crc32c.h"
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-/* CRC-32C (iSCSI) polynomial in reversed bit order. */
-#define POLY 0x82f63b78
-
-/* Table for a quadword-at-a-time software crc. */
-static uint32_t crc32c_table[8][256];
-
-/* Construct table for software CRC-32C calculation. */
-static void crc32c_init_sw(void)
-{
-    uint32_t n, crc, k;
-
-    for (n = 0; n < 256; n++) {
-        crc = n;
-        crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
-        crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
-        crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
-        crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
-        crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
-        crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
-        crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
-        crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
-        crc32c_table[0][n] = crc;
-    }
-    for (n = 0; n < 256; n++) {
-        crc = crc32c_table[0][n];
-        for (k = 1; k < 8; k++) {
-            crc = crc32c_table[0][crc & 0xff] ^ (crc >> 8);
-            crc32c_table[k][n] = crc;
-        }
-    }
-}
-
-/* Table-driven software version as a fall-back.  This is about 15 times slower
-   than using the hardware instructions.  This assumes little-endian integers,
-   as is the case on Intel processors that the assembler code here is for. */
-static uint32_t crc32c_sw(uint32_t crci, const void *buf, size_t len)
-{
-    const unsigned char *next = buf;
-    uint64_t crc;
-
-    crc = crci;// ^ 0xffffffff;
-    while (len && ((uintptr_t)next & 7) != 0) {
-        crc = crc32c_table[0][(crc ^ *next++) & 0xff] ^ (crc >> 8);
-        len--;
-    }
-    while (len >= 8) {
-        crc ^= *(uint64_t *)next;
-        crc = crc32c_table[7][crc & 0xff] ^
-              crc32c_table[6][(crc >> 8) & 0xff] ^
-              crc32c_table[5][(crc >> 16) & 0xff] ^
-              crc32c_table[4][(crc >> 24) & 0xff] ^
-              crc32c_table[3][(crc >> 32) & 0xff] ^
-              crc32c_table[2][(crc >> 40) & 0xff] ^
-              crc32c_table[1][(crc >> 48) & 0xff] ^
-              crc32c_table[0][crc >> 56];
-        next += 8;
-        len -= 8;
-    }
-    while (len) {
-        crc = crc32c_table[0][(crc ^ *next++) & 0xff] ^ (crc >> 8);
-        len--;
-    }
-    return (uint32_t)crc ^ 0xffffffff;
-}
 
 static uint64_t ***chunk_tree_root[512];
-
-static BTRFS_Superblock superblock;
 
 static uint64_t (*write_handler)(void* buf, uint64_t devID, uint64_t off, uint64_t len);
 static uint64_t (*read_handler)(void* buf, uint64_t devID, uint64_t off, uint64_t len);
@@ -81,18 +16,13 @@ static uint64_t (*read_handler)(void* buf, uint64_t devID, uint64_t off, uint64_
 #define L2_LEVEL_SIZE (2 * 1024 * 1024ull)
 #define L1_LEVEL_SIZE (4 * 1024ull)
 
-static uint64_t extent_tree_loc;
-static uint64_t dev_tree_loc;
-static uint64_t fs_tree_loc;
-static uint64_t checksum_tree_loc;
-
 #define INODE_NODE_TRANSLATION_CACHE_SIZE (64 * 1024)
 static uint64_t inode_node_translation_table[INODE_NODE_TRANSLATION_CACHE_SIZE];
 static uint64_t inode_node_translation_table_key[INODE_NODE_TRANSLATION_CACHE_SIZE];
 
 void
 BTRFS_InitializeStructures(int cache_size) {
-	crc32c_init_sw();
+	crc32c_init();
 	memset(chunk_tree_root, 0, 512 * sizeof(uint64_t));
 	memset(inode_node_translation_table, 0, INODE_NODE_TRANSLATION_CACHE_SIZE * sizeof(uint64_t));
 	memset(inode_node_translation_table_key, 0, INODE_NODE_TRANSLATION_CACHE_SIZE * sizeof(uint64_t));
@@ -240,134 +170,15 @@ BTRFS_Write(void *buf, uint64_t logicalAddr, uint64_t len) {
 int
 BTRFS_GetNode(void *buf, uint64_t logicalAddr) {
 	BTRFS_Header *chunk_tree = buf;
-	BTRFS_Read(chunk_tree, logicalAddr, superblock.node_size);
+	BTRFS_Read(chunk_tree, logicalAddr, BTRFS_GetNodeSize());
 	
-	uint32_t crc = crc32c_sw(-1, chunk_tree->uuid, superblock.node_size - 0x20);
+	uint32_t crc = crc32c(-1, chunk_tree->uuid, BTRFS_GetNodeSize() - 0x20);
 	uint32_t expected_csum = *(uint32_t*)(chunk_tree->csum);
 	
 	if(crc != expected_csum)
 		return -1;
 
 	return 0;
-}
-
-void
-BTRFS_FillChunkTreeCache(BTRFS_Header *parent)
-{
-	if(parent->level == 0)
-	{
-		//Fill the chunk cache
-		BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(parent + 1);
-
-		for(int i = 0; i < parent->item_count; i++) {
-
-			if(chunk_entry->key.type == KeyType_DeviceItem){
-
-			}else if(chunk_entry->key.type == KeyType_ChunkItem) {
-
-				BTRFS_ChunkItem *chunk_item = (BTRFS_ChunkItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
-
-				uint64_t logical_addr = chunk_entry->key.offset;
-				for(int j = 0; j < chunk_item->stripe_count; j++){
-					BTRFS_AddMappingToCache(logical_addr, chunk_item->stripes[j].device_id, chunk_item->stripes[j].offset, chunk_item->chunk_size_bytes);
-					logical_addr += chunk_item->chunk_size_bytes;
-				}
-			}
-
-			chunk_entry++;
-		}
-
-	}else
-	{
-		//Visit all of this node's children
-		
-		BTRFS_Header *children = malloc(superblock.node_size);
-
-		BTRFS_KeyPointer *key_ptr = (BTRFS_KeyPointer*)(parent + 1);
-
-		for(uint64_t i = 0; i < parent->item_count; i++){
-
-			if(BTRFS_GetNode(children, key_ptr->block_number) != 0) {
-				printf("Chunk Tree Checksum does not match!\n");
-				return;
-			}
-
-			BTRFS_FillChunkTreeCache(children);
-			key_ptr++;
-		}
-
-		free(children);
-	}
-}
-
-int
-BTRFS_VerifyChecksums(BTRFS_Header *parent)
-{
-	if(parent->level == 0)
-	{
-		int retVal = 0;
-
-		//Fill the chunk cache
-		BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(parent + 1);
-
-		void *data_block = malloc(superblock.sector_size);
-
-		for(int i = 0; i < parent->item_count; i++) {
-
-			if(chunk_entry->key.type == KeyType_ExtentChecksum){
-
-				uint32_t *chunk_item = (uint32_t*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
-				
-				uint64_t sz = 0;
-				uint64_t logicalAddr = chunk_entry->key.offset;
-				while(sz < chunk_entry->data_size){
-
-					BTRFS_Read(data_block, logicalAddr, superblock.sector_size);
-					uint32_t crc = crc32c_sw(-1, data_block, superblock.sector_size);
-
-					if(crc != *chunk_item){
-						printf("Expected Csum: %x\t Address: %lx Calculated Csum: %x\n", *chunk_item, logicalAddr, crc);
-						retVal = -1;
-					}
-
-					logicalAddr += superblock.sector_size;
-					chunk_item ++;
-					sz += sizeof(uint32_t);
-				}
-
-			}
-
-			chunk_entry++;
-		}
-
-		free(data_block);
-		return retVal;
-	}else
-	{
-		int retVal = 0;
-
-		//Visit all of this node's children
-		BTRFS_Header *children = malloc(superblock.node_size);
-		BTRFS_KeyPointer *key_ptr = (BTRFS_KeyPointer*)(parent + 1);
-
-		for(uint64_t i = 0; i < parent->item_count; i++){
-
-			if(BTRFS_GetNode(children, key_ptr->block_number) != 0) {
-				printf("Checksum Tree Checksum does not match!\n");
-				return -1;
-			}
-
-			int val = BTRFS_VerifyChecksums(children);
-			
-			if(retVal == 0)
-				retVal = val;
-
-			key_ptr++;
-		}
-		free(children);
-
-		return retVal;
-	}
 }
 
 void*
@@ -393,283 +204,6 @@ BTRFS_GetNodePointer(BTRFS_Header *parent, BTRFS_KeyType type, int base_index, i
 	return NULL;
 }
 
-static uint64_t current_inode = 0;
-
-int
-BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_path, uint64_t *desired_inode)
-{
-	if(parent->level == 0)
-	{
-		//Calculate the hash of the next piece of the path
-		char *path_end = strchr(file_path, '/');
-		if(path_end == NULL)path_end = strchr(file_path, 0);
-		uint32_t name_hash = ~crc32c_sw(~1, file_path, path_end - file_path);
-
-		//Fill the chunk cache
-		BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(parent + 1);
-
-		for(int i = 0; i < parent->item_count; i++) {
-
-			switch(chunk_entry->key.type) {
-				case KeyType_InodeItem:
-				{
-					//All the entries under the current inode have been checked and no match was found
-					if(current_inode == inode_index)
-						return -1;
-
-
-					current_inode = chunk_entry->key.object_id;
-					inode_node_translation_table_key[current_inode % INODE_NODE_TRANSLATION_CACHE_SIZE] = current_inode;
-					inode_node_translation_table[current_inode % INODE_NODE_TRANSLATION_CACHE_SIZE] = parent->logical_address;
-				}
-				break;
-				case KeyType_DirItem:
-				{
-					if(current_inode != inode_index)
-						break;
-
-					BTRFS_DirectoryItem *dir_item = (BTRFS_DirectoryItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
-					if(chunk_entry->key.offset == name_hash) {	
-						*desired_inode = dir_item->key.object_id;
-						return 1;
-					}
-				}
-				break;
-			}
-
-			chunk_entry++;
-		}
-
-/*
-							case KeyType_XAttrItem:
-							{
-
-							}
-							break;
-							case KeyType_DirIndex:
-							{
-								static uint32_t dir_index_index = 0;
-
-								if(desired_index == dir_index_index) {
-									BTRFS_DirectoryIndex *dir_item = (BTRFS_DirectoryIndex*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[j].data_offset);
-									printf("Dir Index Name: \"%.*s\" Index: %ld\n", dir_item->name_len, dir_item->name_data, dir_item->key.object_id);
-								
-									//We have the inode index, return it
-								}
-
-								dir_index_index++;
-							}
-							break;
-							case KeyType_ExtentData:
-							{
-								static uint32_t extent_index = 0;
-
-								if(desired_index == extent_index) {
-									BTRFS_ExtentDataInline *extent_data_inline = (BTRFS_ExtentDataInline*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[j].data_offset);
-									
-									if(extent_data_inline->type == ExtentDataType_Inline) {
-
-										printf("Extent Data Size: %lx Type: %hhx\n", extent_data_inline->decoded_size, extent_data_inline->type);
-
-									} else if(extent_data_inline->type == ExtentDataType_Regular) {
-										BTRFS_ExtentDataFull *extent_data_reg = (BTRFS_ExtentDataFull*)extent_data_inline;
-
-										printf("Data Location:%lx\n", extent_data_reg->extent_logical_addr);
-
-									}
-								}
-
-								extent_index++;
-							}
-							break;*/
-
-	}else
-	{
-		//Visit all of this node's children
-		
-		BTRFS_Header *children = malloc(superblock.node_size);
-		BTRFS_KeyPointer *key_ptr = (BTRFS_KeyPointer*)(parent + 1);
-
-		for(uint64_t i = 0; i < parent->item_count; i++){
-
-			if(BTRFS_GetNode(children, key_ptr->block_number) != 0) {
-				printf("Chunk Tree Checksum does not match!\n");
-				return -1;
-			}
-
-			int retVal = BTRFS_TraverseFullFSTree(children, inode_index, file_path, desired_inode);
-
-			if(retVal != 0)
-				return retVal;
-
-			key_ptr++;
-		}
-
-		free(children);
-	}
-
-	return 0;
-}
-
-void
-BTRFS_ParseFullFSTree(char *path)
-{
-	//Parse the tree from the root
-
-
-	uint64_t path_len = strlen(path);
-	uint64_t inode = 256;
-
-	if(path[0] == '/')
-		path++;
-
-	BTRFS_Header *children = malloc(superblock.node_size);
-	for(uint64_t i = 0; i < path_len; i++){
-
-		if(inode_node_translation_table_key[inode % INODE_NODE_TRANSLATION_CACHE_SIZE] == inode){
-			if(BTRFS_GetNode(children, inode_node_translation_table[inode % INODE_NODE_TRANSLATION_CACHE_SIZE]) != 0) {
-				printf("Error: Checksum failure!\n");
-				return;
-			}
-		}else{
-			if(BTRFS_GetNode(children, fs_tree_loc) != 0) {
-				printf("Error: Checksum failure!\n");
-				return;
-			}
-		}
-
-		if(BTRFS_TraverseFullFSTree(children, inode, &path[i], &inode) != 1)
-		{
-			printf("Path not found\n");
-		}
-
-		i = strchr(&path[i], '/') - path;
-	}
-	free(children);
-	
-	printf("Inode Found: %ld\n", inode);
-
-	//Now we have found the inode of the target, this can be used to retrieve any desired information
-}
-
-void
-BTRFS_Scrub(void)
-{
-	BTRFS_Header *children = malloc(superblock.node_size);
-	if(BTRFS_GetNode(children, checksum_tree_loc) != 0) {
-		printf("Checksum Tree Checksum does not match!\n");
-		return;
-	}	
-
-	if(BTRFS_VerifyChecksums(children) == 0)
-		printf("Verification complete, no errors found.\n");
-	else
-		printf("Errors found.\n");
-}
-
-void
-BTRFS_ParseRootTree(void)
-{
-	BTRFS_Header *children = malloc(superblock.node_size);
-	if(BTRFS_GetNode(children, superblock.root_tree_root_addr) != 0) {
-		printf("Root Tree Checksum does not match!\n");
-		return;
-	}
-	
-	BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(children + 1);
-
-	for(int i = 0; i < children->item_count; i++) {
-	
-		if(chunk_entry->key.type == KeyType_RootItem) {
-			BTRFS_RootItem *root_item = (BTRFS_RootItem*)((uint8_t*)children + sizeof(BTRFS_Header) + chunk_entry->data_offset);
-
-			//Root items refer to tree types.
-			switch(chunk_entry->key.object_id){
-				case ReservedObjectID_ExtentTree:
-					extent_tree_loc = root_item->root_block_num;
-				break;
-				case ReservedObjectID_DevTree:
-					dev_tree_loc = root_item->root_block_num;
-				break;
-				case ReservedObjectID_FSTree:
-					fs_tree_loc = root_item->root_block_num;
-				break;
-				case ReservedObjectID_ChecksumTree:
-					checksum_tree_loc = root_item->root_block_num;
-				break;
-			}
-		}
-		chunk_entry++;
-	}
-
-	free(children);
-}
-
-void
-BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
-
-	crc32c_init_sw();
-
-	BTRFS_Superblock *sblock = (BTRFS_Superblock*)buf;
-
-	//Start by verifying the checksum
-	uint32_t crc = 0;
-	crc = crc32c_sw(-1, sblock->uuid, 0x1000 - 0x20);
-
-	uint32_t expected_csum = *(uint32_t*)(&sblock->csum);
-
-	char btrfs_magic[] = BTRFS_MagicString;
-
-	for(int i = 0; i < BTRFS_MagicStringLen; i++) {
-		if(btrfs_magic[i] != sblock->magic[i]) {
-			*block = NULL;
-			return;
-		}
-	}
-
-	if(expected_csum != crc){
-		*block = NULL;
-		return;
-	}
-
-	*block = sblock;
-
-	//Copy the superblock into a backup table
-	memcpy(&superblock, sblock, sizeof(BTRFS_Superblock));
-
-
-	//Fill the btrfs translation cache
-	uint64_t table_bytes = sblock->key_chunkItem_table_len;
-	BTRFS_Key_ChunkItem_Pair *mapping = (BTRFS_Key_ChunkItem_Pair*)sblock->key_chunkItem_table;
-
-	while(table_bytes > 0) {
-
-		int stripe_cnt = mapping->value.stripe_count;
-		uint64_t logical_addr = mapping->key.offset;
-
-		for(int i = 0; i < stripe_cnt; i++)
-		{
-			BTRFS_AddMappingToCache(logical_addr, mapping->value.stripes[i].device_id, mapping->value.stripes[i].offset, mapping->value.chunk_size_bytes);
-			logical_addr += mapping->value.chunk_size_bytes;
-		}
-
-		int sz = sizeof(BTRFS_Key_ChunkItem_Pair) + stripe_cnt * sizeof(BTRFS_Stripe);
-		table_bytes -= sz;
-		mapping = (BTRFS_Key_ChunkItem_Pair*)((uint8_t*)mapping + sz);
-	}
-
-	BTRFS_Header *chunk_tree = malloc(sblock->node_size);
-	if(BTRFS_GetNode(chunk_tree, sblock->chunk_tree_root_addr) != 0) {
-		printf("Chunk Tree Checksum does not match!");
-		return;
-	}
-	BTRFS_FillChunkTreeCache(chunk_tree);
-	free(chunk_tree);
-
-	BTRFS_ParseRootTree();
-	BTRFS_ParseFullFSTree("test/wallpaper2.png");
-	BTRFS_Scrub();
-}
 
 int
 BTRFS_TranslateLogicalAddress(uint64_t logicalAddress, 
@@ -719,4 +253,17 @@ BTRFS_TranslateLogicalAddress(uint64_t logicalAddress,
 	}
 
 	return -1;
+}
+
+int
+BTRFS_StartParser(void *superblock0) {
+	
+	BTRFS_Superblock *sblock = NULL;
+	BTRFS_ParseSuperblock(superblock0, &sblock);
+	if(sblock == NULL)
+		return -1;
+
+
+	BTRFS_ParseChunkTree();
+	BTRFS_ParseRootTree();
 }
