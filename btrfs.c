@@ -283,7 +283,6 @@ BTRFS_FillChunkTreeCache(BTRFS_Header *parent)
 			}
 
 			BTRFS_FillChunkTreeCache(children);
-
 			key_ptr++;
 		}
 
@@ -314,6 +313,8 @@ BTRFS_GetNodePointer(BTRFS_Header *parent, BTRFS_KeyType type, int base_index, i
 	return NULL;
 }
 
+static uint64_t current_inode = 0;
+
 int
 BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_path, uint64_t *desired_inode)
 {
@@ -332,29 +333,23 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_
 			switch(chunk_entry->key.type) {
 				case KeyType_InodeItem:
 				{
-					if(chunk_entry->key.object_id != inode_index)
+					//All the entries under the current inode have been checked and no match was found
+					if(current_inode == inode_index)
+						return -1;
+
+					current_inode = chunk_entry->key.object_id;
+				}
+				break;
+				case KeyType_DirItem:
+				{
+					if(current_inode != inode_index)
 						break;
 
-					for(int j = 2; j < parent->item_count && chunk_entry[j].key.type != KeyType_InodeItem; j++) {
-
-						if(chunk_entry[j].key.type == KeyType_DirItem)
-						{
-							static uint32_t dir_item_index = 0;
-
-							if(chunk_entry[j].key.offset == name_hash) {
-
-								BTRFS_DirectoryItem *dir_item = (BTRFS_DirectoryItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry[j].data_offset);
-								
-								*desired_inode = dir_item->key.object_id;
-								return 1;
-							}
-
-							dir_item_index++;
-						}
+					BTRFS_DirectoryItem *dir_item = (BTRFS_DirectoryItem*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
+					if(chunk_entry->key.offset == name_hash) {	
+						*desired_inode = dir_item->key.object_id;
+						return 1;
 					}
-
-					//If the entry was not found, the file does not exist
-					return -1;
 				}
 				break;
 			}
@@ -410,7 +405,6 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_
 		//Visit all of this node's children
 		
 		BTRFS_Header *children = malloc(superblock.node_size);
-
 		BTRFS_KeyPointer *key_ptr = (BTRFS_KeyPointer*)(parent + 1);
 
 		for(uint64_t i = 0; i < parent->item_count; i++){
@@ -420,7 +414,6 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_
 				return -1;
 			}
 
-			printf("Level Traversal\n");
 			int retVal = BTRFS_TraverseFullFSTree(children, inode_index, file_path, desired_inode);
 
 			if(retVal != 0)
@@ -455,7 +448,7 @@ BTRFS_ParseFullFSTree(char *path)
 	for(uint64_t i = 0; i < path_len; i++){
 		if(BTRFS_TraverseFullFSTree(children, inode, &path[i], &inode) != 1)
 		{
-			printf("Path not found");
+			printf("Path not found\n");
 		}
 		i = strchr(&path[i], '/') - path;
 	}
