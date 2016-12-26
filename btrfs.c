@@ -86,10 +86,16 @@ static uint64_t dev_tree_loc;
 static uint64_t fs_tree_loc;
 static uint64_t checksum_tree_loc;
 
+#define INODE_NODE_TRANSLATION_CACHE_SIZE 16384
+static uint64_t inode_node_translation_table[INODE_NODE_TRANSLATION_CACHE_SIZE];
+static uint64_t inode_node_translation_table_key[INODE_NODE_TRANSLATION_CACHE_SIZE];
+
 void
 BTRFS_InitializeStructures(int cache_size) {
 	crc32c_init_sw();
 	memset(chunk_tree_root, 0, 512 * sizeof(uint64_t));
+	memset(inode_node_translation_table, 0, INODE_NODE_TRANSLATION_CACHE_SIZE * sizeof(uint64_t));
+	memset(inode_node_translation_table_key, 0, INODE_NODE_TRANSLATION_CACHE_SIZE * sizeof(uint64_t));
 }
 
 void
@@ -337,7 +343,10 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_
 					if(current_inode == inode_index)
 						return -1;
 
+
 					current_inode = chunk_entry->key.object_id;
+					inode_node_translation_table_key[current_inode % INODE_NODE_TRANSLATION_CACHE_SIZE] = current_inode;
+					inode_node_translation_table[current_inode % INODE_NODE_TRANSLATION_CACHE_SIZE] = parent->logical_address;
 				}
 				break;
 				case KeyType_DirItem:
@@ -433,11 +442,6 @@ BTRFS_ParseFullFSTree(char *path)
 {
 	//Parse the tree from the root
 
-	BTRFS_Header *children = malloc(superblock.node_size);
-	if(BTRFS_GetNode(children, fs_tree_loc) != 0) {
-		printf("Root Tree Checksum does not match!\n");
-		return;
-	}
 
 	uint64_t path_len = strlen(path);
 	uint64_t inode = 256;
@@ -445,13 +449,29 @@ BTRFS_ParseFullFSTree(char *path)
 	if(path[0] == '/')
 		path++;
 
+	BTRFS_Header *children = malloc(superblock.node_size);
 	for(uint64_t i = 0; i < path_len; i++){
+
+		if(inode_node_translation_table_key[inode % INODE_NODE_TRANSLATION_CACHE_SIZE] == inode){
+			if(BTRFS_GetNode(children, inode_node_translation_table[inode % INODE_NODE_TRANSLATION_CACHE_SIZE]) != 0) {
+				printf("Error: Checksum failure!\n");
+				return;
+			}
+		}else{
+			if(BTRFS_GetNode(children, fs_tree_loc) != 0) {
+				printf("Error: Checksum failure!\n");
+				return;
+			}
+		}
+
 		if(BTRFS_TraverseFullFSTree(children, inode, &path[i], &inode) != 1)
 		{
 			printf("Path not found\n");
 		}
+
 		i = strchr(&path[i], '/') - path;
 	}
+	free(children);
 	
 	printf("Inode Found: %ld\n", inode);
 
@@ -558,7 +578,7 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 	free(chunk_tree);
 
 	BTRFS_ParseRootTree();
-	BTRFS_ParseFullFSTree("test/wallpaper2.png");
+	BTRFS_ParseFullFSTree("test (549th copy)/wallpaper2.png");
 }
 
 int
