@@ -86,7 +86,7 @@ static uint64_t dev_tree_loc;
 static uint64_t fs_tree_loc;
 static uint64_t checksum_tree_loc;
 
-#define INODE_NODE_TRANSLATION_CACHE_SIZE 16384
+#define INODE_NODE_TRANSLATION_CACHE_SIZE (64 * 1024)
 static uint64_t inode_node_translation_table[INODE_NODE_TRANSLATION_CACHE_SIZE];
 static uint64_t inode_node_translation_table_key[INODE_NODE_TRANSLATION_CACHE_SIZE];
 
@@ -151,7 +151,7 @@ BTRFS_AddMappingToCache(uint64_t vAddr, uint64_t deviceID, uint64_t pAddr, uint6
 		return;
 	}
 
-	uint32_t l4_i = (vAddr >> 39);
+	uint32_t l4_i = (vAddr >> 39) & 0x1FF;
 	uint32_t l3_i = (vAddr >> 30) & 0x1FF;
 	uint32_t l2_i = (vAddr >> 21) & 0x1FF;
 	uint32_t l1_i = (vAddr >> 12) & 0x1FF;
@@ -218,8 +218,10 @@ BTRFS_SetDiskWriteHandler(uint64_t (*handler)(void* buf, uint64_t devID, uint64_
 uint64_t
 BTRFS_Read(void *buf, uint64_t logicalAddr, uint64_t len) {
 	BTRFS_PhysicalAddress p_addr;
-	if(BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0)
+	if(BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0){
+		printf("Error: Read %lx\n", logicalAddr);
 		return -1;
+	}
 
 	return read_handler(buf, p_addr.device_id, p_addr.physical_addr, len);
 }
@@ -227,8 +229,10 @@ BTRFS_Read(void *buf, uint64_t logicalAddr, uint64_t len) {
 uint64_t
 BTRFS_Write(void *buf, uint64_t logicalAddr, uint64_t len) {
 	BTRFS_PhysicalAddress p_addr;
-	if(BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0)
+	if(BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0){
+		printf("Error: Write\n");
 		return -1;
+	}
 
 	return write_handler(buf, p_addr.device_id, p_addr.physical_addr, len);	
 }
@@ -293,6 +297,76 @@ BTRFS_FillChunkTreeCache(BTRFS_Header *parent)
 		}
 
 		free(children);
+	}
+}
+
+int
+BTRFS_VerifyChecksums(BTRFS_Header *parent)
+{
+	if(parent->level == 0)
+	{
+		int retVal = 0;
+
+		//Fill the chunk cache
+		BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(parent + 1);
+
+		void *data_block = malloc(superblock.sector_size);
+
+		for(int i = 0; i < parent->item_count; i++) {
+
+			if(chunk_entry->key.type == KeyType_ExtentChecksum){
+
+				uint32_t *chunk_item = (uint32_t*)((uint8_t*)parent + sizeof(BTRFS_Header) + chunk_entry->data_offset);
+				
+				uint64_t sz = 0;
+				uint64_t logicalAddr = chunk_entry->key.offset;
+				while(sz < chunk_entry->data_size){
+
+					BTRFS_Read(data_block, logicalAddr, superblock.sector_size);
+					uint32_t crc = crc32c_sw(-1, data_block, superblock.sector_size);
+
+					if(crc != *chunk_item){
+						printf("Expected Csum: %x\t Address: %lx Calculated Csum: %x\n", *chunk_item, logicalAddr, crc);
+						retVal = -1;
+					}
+
+					logicalAddr += superblock.sector_size;
+					chunk_item ++;
+					sz += sizeof(uint32_t);
+				}
+
+			}
+
+			chunk_entry++;
+		}
+
+		free(data_block);
+		return retVal;
+	}else
+	{
+		int retVal = 0;
+
+		//Visit all of this node's children
+		BTRFS_Header *children = malloc(superblock.node_size);
+		BTRFS_KeyPointer *key_ptr = (BTRFS_KeyPointer*)(parent + 1);
+
+		for(uint64_t i = 0; i < parent->item_count; i++){
+
+			if(BTRFS_GetNode(children, key_ptr->block_number) != 0) {
+				printf("Checksum Tree Checksum does not match!\n");
+				return -1;
+			}
+
+			int val = BTRFS_VerifyChecksums(children);
+			
+			if(retVal == 0)
+				retVal = val;
+
+			key_ptr++;
+		}
+		free(children);
+
+		return retVal;
 	}
 }
 
@@ -479,6 +553,21 @@ BTRFS_ParseFullFSTree(char *path)
 }
 
 void
+BTRFS_Scrub(void)
+{
+	BTRFS_Header *children = malloc(superblock.node_size);
+	if(BTRFS_GetNode(children, checksum_tree_loc) != 0) {
+		printf("Checksum Tree Checksum does not match!\n");
+		return;
+	}	
+
+	if(BTRFS_VerifyChecksums(children) == 0)
+		printf("Verification complete, no errors found.\n");
+	else
+		printf("Errors found.\n");
+}
+
+void
 BTRFS_ParseRootTree(void)
 {
 	BTRFS_Header *children = malloc(superblock.node_size);
@@ -578,7 +667,8 @@ BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {
 	free(chunk_tree);
 
 	BTRFS_ParseRootTree();
-	BTRFS_ParseFullFSTree("test (549th copy)/wallpaper2.png");
+	BTRFS_ParseFullFSTree("test/wallpaper2.png");
+	BTRFS_Scrub();
 }
 
 int
@@ -587,7 +677,7 @@ BTRFS_TranslateLogicalAddress(uint64_t logicalAddress,
 
 	//Walk the chunk tree to translate the provided address
 
-	uint32_t l4_i = (logicalAddress >> 39);
+	uint32_t l4_i = (logicalAddress >> 39) & 0x1FF;
 	uint32_t l3_i = (logicalAddress >> 30) & 0x1FF;
 	uint32_t l2_i = (logicalAddress >> 21) & 0x1FF;
 	uint32_t l1_i = (logicalAddress >> 12) & 0x1FF;
