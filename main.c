@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "btrfs.h"
+#include "btrfs/btrfs.h"
 
 static FILE *fd = NULL;
 

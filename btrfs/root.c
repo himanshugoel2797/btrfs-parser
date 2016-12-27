@@ -26,13 +26,12 @@ BTRFS_GetChecksumTreeLocation(void){
 	return checksum_tree_loc;
 }
 
-void
+int
 BTRFS_ParseRootTree(void)
 {
 	BTRFS_Header *children = malloc(BTRFS_GetNodeSize());
 	if(BTRFS_GetNode(children, BTRFS_GetRootTreeBlockAddress()) != 0) {
-		printf("Root Tree Checksum does not match!\n");
-		return;
+		return -1;
 	}
 	
 	BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(children + 1);
@@ -62,4 +61,5 @@ BTRFS_ParseRootTree(void)
 	}
 
 	free(children);
+	return 0;
 }

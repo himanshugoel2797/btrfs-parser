@@ -149,8 +149,7 @@ uint64_t
 BTRFS_Read(void *buf, uint64_t logicalAddr, uint64_t len) {
 	BTRFS_PhysicalAddress p_addr;
 	if(BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0){
-		printf("Error: Read %lx\n", logicalAddr);
-		return -1;
+		return 0;
 	}
 
 	return read_handler(buf, p_addr.device_id, p_addr.physical_addr, len);
@@ -160,8 +159,7 @@ uint64_t
 BTRFS_Write(void *buf, uint64_t logicalAddr, uint64_t len) {
 	BTRFS_PhysicalAddress p_addr;
 	if(BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0){
-		printf("Error: Write\n");
-		return -1;
+		return 0;
 	}
 
 	return write_handler(buf, p_addr.device_id, p_addr.physical_addr, len);	

@@ -59,7 +59,6 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_
 		for(uint64_t i = 0; i < parent->item_count; i++){
 
 			if(BTRFS_GetNode(children, key_ptr->block_number) != 0) {
-				printf("Chunk Tree Checksum does not match!\n");
 				return -1;
 			}
 
@@ -77,8 +76,8 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_
 	return 0;
 }
 
-void
-BTRFS_ParseFullFSTree(char *path)
+int
+BTRFS_ParseFullFSTree(char *path, uint64_t *resolved_inode)
 {
 	//Parse the tree from the root
 	uint32_t node_size = BTRFS_GetNodeSize();
@@ -94,27 +93,25 @@ BTRFS_ParseFullFSTree(char *path)
 
 		if(inode_node_translation_table_key[inode % INODE_NODE_TRANSLATION_CACHE_SIZE] == inode){
 			if(BTRFS_GetNode(children, inode_node_translation_table[inode % INODE_NODE_TRANSLATION_CACHE_SIZE]) != 0) {
-				printf("Error: Checksum failure!\n");
-				return;
+				return -1;
 			}
 		}else{
 			if(BTRFS_GetNode(children, BTRFS_GetFSTreeLocation()) != 0) {
-				printf("Error: Checksum failure!\n");
-				return;
+				return -1;
 			}
 		}
 
 		if(BTRFS_TraverseFullFSTree(children, inode, &path[i], &inode) != 1)
 		{
-			printf("Path not found\n");
+			return -2;
 		}
 
 		i = strchr(&path[i], '/') - path;
 	}
 	free(children);
 	
-	printf("Inode Found: %ld\n", inode);
-
 	//Now we have found the inode of the target, this can be used to retrieve any desired information
+	*resolved_inode = inode;
+	return 0;
 }
 

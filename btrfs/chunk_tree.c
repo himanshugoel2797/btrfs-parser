@@ -41,7 +41,6 @@ BTRFS_FillChunkTreeCache(BTRFS_Header *parent)
 		for(uint64_t i = 0; i < parent->item_count; i++){
 
 			if(BTRFS_GetNode(children, key_ptr->block_number) != 0) {
-				printf("Chunk Tree Checksum does not match!\n");
 				return;
 			}
 

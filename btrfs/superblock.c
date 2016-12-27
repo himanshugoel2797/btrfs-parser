@@ -30,7 +30,10 @@ BTRFS_GetChunkTreeRootAddress(void){
 	return superblock.chunk_tree_root_addr;
 }
 
-
+void
+BTRFS_GetLabel(char *buffer){
+	strcpy(buffer, superblock.label);
+}
 
 void
 BTRFS_ParseSuperblock(void *buf, BTRFS_Superblock **block) {

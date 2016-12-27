@@ -3,7 +3,7 @@
 
 #include <stdlib.h>
 
-int
+uint64_t
 BTRFS_VerifyChecksums(BTRFS_Header *parent)
 {
 	uint32_t node_size = BTRFS_GetNodeSize();
@@ -11,7 +11,7 @@ BTRFS_VerifyChecksums(BTRFS_Header *parent)
 
 	if(parent->level == 0)
 	{
-		int retVal = 0;
+		uint64_t retVal = 0;
 
 		//Fill the chunk cache
 		BTRFS_ItemPointer *chunk_entry = (BTRFS_ItemPointer*)(parent + 1);
@@ -32,8 +32,7 @@ BTRFS_VerifyChecksums(BTRFS_Header *parent)
 					uint32_t crc = crc32c(-1, data_block, sector_size);
 
 					if(crc != *chunk_item){
-						printf("Expected Csum: %x\t Address: %lx Calculated Csum: %x\n", *chunk_item, logicalAddr, crc);
-						retVal = -1;
+						retVal++;
 					}
 
 					logicalAddr += sector_size;
@@ -50,7 +49,7 @@ BTRFS_VerifyChecksums(BTRFS_Header *parent)
 		return retVal;
 	}else
 	{
-		int retVal = 0;
+		uint64_t retVal = 0;
 
 		//Visit all of this node's children
 		BTRFS_Header *children = malloc(node_size);
@@ -59,14 +58,10 @@ BTRFS_VerifyChecksums(BTRFS_Header *parent)
 		for(uint64_t i = 0; i < parent->item_count; i++){
 
 			if(BTRFS_GetNode(children, key_ptr->block_number) != 0) {
-				printf("Checksum Tree Checksum does not match!\n");
-				return -1;
+				return 1;
 			}
 
-			int val = BTRFS_VerifyChecksums(children);
-			
-			if(retVal == 0)
-				retVal = val;
+			retVal += BTRFS_VerifyChecksums(children);
 
 			key_ptr++;
 		}
@@ -76,17 +71,13 @@ BTRFS_VerifyChecksums(BTRFS_Header *parent)
 	}
 }
 
-void
+uint64_t
 BTRFS_Scrub(void)
 {
 	BTRFS_Header *children = malloc(BTRFS_GetNodeSize());
 	if(BTRFS_GetNode(children, BTRFS_GetChecksumTreeLocation()) != 0) {
-		printf("Checksum Tree Checksum does not match!\n");
-		return;
+		return 1;
 	}	
 
-	if(BTRFS_VerifyChecksums(children) == 0)
-		printf("Verification complete, no errors found.\n");
-	else
-		printf("Errors found.\n");
+	return BTRFS_VerifyChecksums(children);
 }
