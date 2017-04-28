@@ -11,7 +11,7 @@ BTRFS_TraverseFullFSTree(BTRFS_Header *parent, uint64_t inode_index, char *file_
 	{
 		//Calculate the hash of the next piece of the path
 		char *path_end = strchr(file_path, '/');
-		if(path_end == NULL)path_end = strchr(file_path, 0);
+		if(path_end == NULL)path_end = strchr(file_path, '\0');
 		uint32_t name_hash = ~crc32c_sw(~1, file_path, path_end - file_path);
 
 		//Fill the chunk cache
