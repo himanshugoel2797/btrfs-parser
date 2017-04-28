@@ -221,4 +221,6 @@ void BTRFS_AddInodeToCache(uint64_t inode, uint64_t addr);
 
 void BTRFS_GetInodeFromCache(uint64_t *inode, uint64_t *addr);
 
+int BTRFS_TraverseLogTree(BTRFS_Header *parent);
+
 #endif

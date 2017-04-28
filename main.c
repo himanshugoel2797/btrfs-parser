@@ -40,11 +40,18 @@ int main(int argc, char *argv[]) {
   void *file_buf = malloc(10 * 1024 * 1024);
   uint64_t len = BTRFS_ReadFile(inode, 0, 10 * 1024 * 1024, file_buf);
 
-  FILE *oF = fopen("test.png", "wb");
-  fwrite(file_buf, 1, len, oF);
-  fclose(oF);
+  // FILE *oF = fopen("test.png", "wb");
+  // fwrite(file_buf, 1, len, oF);
+  // fclose(oF);
 
   printf("Result: %lld RetVal = %lld Inode: %lld\n", len, retVal, inode);
+
+  BTRFS_Header *children = malloc(BTRFS_GetNodeSize());
+  if (BTRFS_GetNode(children, BTRFS_GetFSTreeLocation()) != 0) {
+    return -1;
+  }
+
+  BTRFS_TraverseLogTree(children);
   // Build an actual mapping table to translate logical addresses
   // Use it to walk the chunk tree
   // Use the chunk tree to be able to translate any logical address
