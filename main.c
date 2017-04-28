@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2017 Himanshu Goel
+ *
+ * This software is released under the MIT License.
+ * https://opensource.org/licenses/MIT
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -15,14 +22,29 @@ uint64_t disk_write(void *buf, uint64_t devID, uint64_t off, uint64_t len) {
 }
 
 int main(int argc, char *argv[]) {
-
   fd = fopen(argv[1], "rb");
+  if (fd == NULL) {
+    printf("Failed to load image.");
+    return 0;
+  }
+
   BTRFS_InitializeStructures(32 * 1024);
   BTRFS_SetDiskReadHandler(disk_read);
   BTRFS_SetDiskWriteHandler(disk_write);
 
   BTRFS_StartParser();
 
+  uint64_t inode = 0;
+  uint64_t retVal = BTRFS_ParseFullFSTree("/test/wallpaper2.png", &inode);
+
+  void *file_buf = malloc(10 * 1024 * 1024);
+  uint64_t len = BTRFS_ReadFile(inode, 0, 10 * 1024 * 1024, file_buf);
+
+  FILE *oF = fopen("test.png", "wb");
+  fwrite(file_buf, 1, len, oF);
+  fclose(oF);
+
+  printf("Result: %lld RetVal = %lld Inode: %lld\n", len, retVal, inode);
   // Build an actual mapping table to translate logical addresses
   // Use it to walk the chunk tree
   // Use the chunk tree to be able to translate any logical address

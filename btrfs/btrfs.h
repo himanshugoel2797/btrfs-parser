@@ -1,5 +1,10 @@
-#ifndef _BTRFS_PARSER_H_
-#define _BTRFS_PARSER_H_
+// Copyright (c) 2017 Himanshu Goel
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+#ifndef BTRFS_PARSER_H_
+#define BTRFS_PARSER_H_
 
 #include <stddef.h>
 #include <stdint.h>
@@ -205,5 +210,15 @@ int BTRFS_ParseChunkTree(void);
 /// @return     -1 on checksum failure, -2 on file not found, 0 on success.
 ///
 int BTRFS_ParseFullFSTree(char *path, uint64_t *resolved_inode);
+
+int BTRFS_GetFSTreeExtent(BTRFS_Header *parent, uint64_t inode, uint64_t offset,
+                          BTRFS_ExtentDataInline *node, uint64_t *node_off);
+
+uint64_t BTRFS_ReadFile(uint64_t inode, uint64_t offset, uint64_t len,
+                        void *dest_buf);
+
+void BTRFS_AddInodeToCache(uint64_t inode, uint64_t addr);
+
+void BTRFS_GetInodeFromCache(uint64_t *inode, uint64_t *addr);
 
 #endif

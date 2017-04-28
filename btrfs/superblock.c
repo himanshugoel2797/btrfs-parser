@@ -1,3 +1,10 @@
+/**
+ * Copyright (c) 2017 Himanshu Goel
+ *
+ * This software is released under the MIT License.
+ * https://opensource.org/licenses/MIT
+ */
+
 #include "btrfs.h"
 #include "crc32c.h"
 
@@ -23,7 +30,6 @@ uint64_t BTRFS_GetChunkTreeRootAddress(void) {
 void BTRFS_GetLabel(char *buffer) { strcpy(buffer, superblock.label); }
 
 int BTRFS_ParseSuperblock(BTRFS_Superblock *block) {
-
   crc32c_init();
 
   BTRFS_Superblock *sblock = block;
@@ -31,7 +37,6 @@ int BTRFS_ParseSuperblock(BTRFS_Superblock *block) {
   uint64_t highest_gen = 0;
 
   for (int i = 0; BTRFS_superblock_offsets[i] != 0; i++) {
-
     if (BTRFS_ReadRaw(sblock, 0, BTRFS_superblock_offsets[i], 0x1000) != 0x1000)
       continue;
 
@@ -51,11 +56,9 @@ int BTRFS_ParseSuperblock(BTRFS_Superblock *block) {
       }
     }
 
-    if (magic_check_failed)
-      continue;
+    if (magic_check_failed) continue;
 
-    if (expected_csum != crc)
-      continue;
+    if (expected_csum != crc) continue;
 
     // Determine if this block has the highest generation
     if (sblock->generation >= highest_gen) {
@@ -64,11 +67,12 @@ int BTRFS_ParseSuperblock(BTRFS_Superblock *block) {
     }
   }
 
-  if (highest_gen_idx == -1)
-    return -1; // Failed to find a valid superblock.
+  if (highest_gen_idx == -1) return -1;  // Failed to find a valid superblock.
 
   // Read in the highest generation block
   BTRFS_ReadRaw(sblock, 0, BTRFS_superblock_offsets[highest_gen_idx], 0x1000);
+
+  printf("Highest gen Superblock: %d\n", highest_gen_idx);
 
   // Copy the superblock into a backup table
   memcpy(&superblock, sblock, sizeof(BTRFS_Superblock));
@@ -79,7 +83,6 @@ int BTRFS_ParseSuperblock(BTRFS_Superblock *block) {
       (BTRFS_Key_ChunkItem_Pair *)sblock->key_chunkItem_table;
 
   while (table_bytes > 0) {
-
     int stripe_cnt = mapping->value.stripe_count;
     uint64_t logical_addr = mapping->key.offset;
 

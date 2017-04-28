@@ -1,3 +1,8 @@
+// Copyright (c) 2017 Himanshu Goel
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
 #ifndef _BTRFS_TYPES_H_
 #define _BTRFS_TYPES_H_
 
