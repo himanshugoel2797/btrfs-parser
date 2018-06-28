@@ -28,23 +28,28 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
+  int retVal = 0;
+
   BTRFS_InitializeStructures(32 * 1024);
   BTRFS_SetDiskReadHandler(disk_read);
   BTRFS_SetDiskWriteHandler(disk_write);
 
-  BTRFS_StartParser();
+  retVal = BTRFS_StartParser();
+
+  printf("RetVal = %d\n", retVal);
+
 
   uint64_t inode = 0;
-  uint64_t retVal = BTRFS_ParseFullFSTree("/test/wallpaper2.png", &inode);
+  retVal = BTRFS_ParseFullFSTree("/test/wallpaper.png", &inode);
 
   void *file_buf = malloc(10 * 1024 * 1024);
   uint64_t len = BTRFS_ReadFile(inode, 0, 10 * 1024 * 1024, file_buf);
 
-  // FILE *oF = fopen("test.png", "wb");
-  // fwrite(file_buf, 1, len, oF);
-  // fclose(oF);
+   FILE *oF = fopen("test.png", "wb");
+   fwrite(file_buf, 1, len, oF);
+   fclose(oF);
 
-  printf("Result: %lld RetVal = %lld Inode: %lld\n", len, retVal, inode);
+  printf("Result: %lld RetVal = %d Inode: %lld\n", len, retVal, inode);
 
   BTRFS_Header *children = malloc(BTRFS_GetNodeSize());
   if (BTRFS_GetNode(children, BTRFS_GetFSTreeLocation()) != 0) {

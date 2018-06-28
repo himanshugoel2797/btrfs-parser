@@ -72,7 +72,9 @@ int BTRFS_ParseSuperblock(BTRFS_Superblock *block) {
   // Read in the highest generation block
   BTRFS_ReadRaw(sblock, 0, BTRFS_superblock_offsets[highest_gen_idx], 0x1000);
 
+  printf("Label: %s\n", sblock->label);
   printf("Highest gen Superblock: %d\n", highest_gen_idx);
+  printf("Chunk tree root: %llx\n", sblock->chunk_tree_root_addr);
 
   // Copy the superblock into a backup table
   memcpy(&superblock, sblock, sizeof(BTRFS_Superblock));

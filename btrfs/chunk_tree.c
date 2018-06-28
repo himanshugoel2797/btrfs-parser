@@ -58,8 +58,9 @@ BTRFS_ParseChunkTree(void){
 	uint32_t node_size = BTRFS_GetNodeSize();
 
 	BTRFS_Header *chunk_tree = malloc(node_size);
-	if(BTRFS_GetNode(chunk_tree, BTRFS_GetChunkTreeRootAddress()) != 0)
-		return -1;
+	int err = 0;
+	if((err = BTRFS_GetNode(chunk_tree, BTRFS_GetChunkTreeRootAddress())) != 0)
+		return err;
 
 	BTRFS_FillChunkTreeCache(chunk_tree);
 	free(chunk_tree);

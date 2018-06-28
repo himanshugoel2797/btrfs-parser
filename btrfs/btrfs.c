@@ -65,25 +65,25 @@ void BTRFS_AddMappingToCache(uint64_t vAddr, uint64_t deviceID, uint64_t pAddr,
   if (len != L4_LEVEL_SIZE && len != L3_LEVEL_SIZE && len != L2_LEVEL_SIZE &&
       len != L1_LEVEL_SIZE) {
     while (len > 0) {
-      if (len >= L4_LEVEL_SIZE) {
+      if (len >= L4_LEVEL_SIZE && vAddr % L4_LEVEL_SIZE == 0) {
         BTRFS_AddMappingToCache(vAddr, deviceID, pAddr, L4_LEVEL_SIZE);
 
         len -= L4_LEVEL_SIZE;
         vAddr += L4_LEVEL_SIZE;
         pAddr += L4_LEVEL_SIZE;
-      } else if (len >= L3_LEVEL_SIZE) {
+      } else if (len >= L3_LEVEL_SIZE && vAddr % L3_LEVEL_SIZE == 0) {
         BTRFS_AddMappingToCache(vAddr, deviceID, pAddr, L3_LEVEL_SIZE);
 
         len -= L3_LEVEL_SIZE;
         vAddr += L3_LEVEL_SIZE;
         pAddr += L3_LEVEL_SIZE;
-      } else if (len >= L2_LEVEL_SIZE) {
+      } else if (len >= L2_LEVEL_SIZE && vAddr % L2_LEVEL_SIZE == 0) {
         BTRFS_AddMappingToCache(vAddr, deviceID, pAddr, L2_LEVEL_SIZE);
 
         len -= L2_LEVEL_SIZE;
         vAddr += L2_LEVEL_SIZE;
         pAddr += L2_LEVEL_SIZE;
-      } else if (len >= L1_LEVEL_SIZE) {
+      } else if (len >= L1_LEVEL_SIZE && vAddr % L1_LEVEL_SIZE == 0) {
         BTRFS_AddMappingToCache(vAddr, deviceID, pAddr, L1_LEVEL_SIZE);
 
         len -= L1_LEVEL_SIZE;
@@ -94,6 +94,7 @@ void BTRFS_AddMappingToCache(uint64_t vAddr, uint64_t deviceID, uint64_t pAddr,
 
     return;
   }
+  printf("Vaddr: %llx \tPaddr: %llx \tLen: %llx \n", vAddr, pAddr, len);
 
   uint32_t l4_i = (vAddr >> 39) & 0x1FF;
   uint32_t l3_i = (vAddr >> 30) & 0x1FF;
@@ -158,8 +159,9 @@ void BTRFS_SetDiskWriteHandler(uint64_t (*handler)(void *buf, uint64_t devID,
 
 uint64_t BTRFS_Read(void *buf, uint64_t logicalAddr, uint64_t len) {
   BTRFS_PhysicalAddress p_addr;
-  if (BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0) {
-    return 0;
+  int err = 0;
+  if ((err = BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr)) != 0) {
+    return err;
   }
 
   return read_handler(buf, p_addr.device_id, p_addr.physical_addr, len);
@@ -171,8 +173,9 @@ uint64_t BTRFS_ReadRaw(void *buf, uint64_t devId, uint64_t addr, uint64_t len) {
 
 uint64_t BTRFS_Write(void *buf, uint64_t logicalAddr, uint64_t len) {
   BTRFS_PhysicalAddress p_addr;
-  if (BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr) != 0) {
-    return 0;
+  int err = 0;
+  if ((err = BTRFS_TranslateLogicalAddress(logicalAddr, &p_addr)) != 0) {
+    return err;
   }
 
   return write_handler(buf, p_addr.device_id, p_addr.physical_addr, len);
@@ -180,12 +183,14 @@ uint64_t BTRFS_Write(void *buf, uint64_t logicalAddr, uint64_t len) {
 
 int BTRFS_GetNode(void *buf, uint64_t logicalAddr) {
   BTRFS_Header *chunk_tree = buf;
-  BTRFS_Read(chunk_tree, logicalAddr, BTRFS_GetNodeSize());
+  int err = 0;
+  if((err = BTRFS_Read(chunk_tree, logicalAddr, BTRFS_GetNodeSize())) < 0)
+    return err;
 
   uint32_t crc = crc32c(-1, chunk_tree->uuid, BTRFS_GetNodeSize() - 0x20);
   uint32_t expected_csum = *(uint32_t *)(chunk_tree->csum);
 
-  if (crc != expected_csum) return -1;
+  if (crc != expected_csum) return -2;
 
   return 0;
 }
@@ -227,7 +232,7 @@ int BTRFS_TranslateLogicalAddress(uint64_t logicalAddress,
     return 0;
   }
 
-  if ((uint64_t)chunk_tree_root[l4_i][l3_i] == 0) return -1;
+  if ((uint64_t)chunk_tree_root[l4_i][l3_i] == 0) return -2;
 
   if ((uint64_t)chunk_tree_root[l4_i][l3_i] & 1) {
     physicalAddress->physical_addr = (uint64_t)chunk_tree_root[l4_i][l3_i] & ~1;
@@ -235,7 +240,7 @@ int BTRFS_TranslateLogicalAddress(uint64_t logicalAddress,
     return 0;
   }
 
-  if ((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i] == 0) return -1;
+  if ((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i] == 0) return -3;
 
   if ((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i] & 1) {
     physicalAddress->physical_addr =
@@ -244,7 +249,7 @@ int BTRFS_TranslateLogicalAddress(uint64_t logicalAddress,
     return 0;
   }
 
-  if ((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i][l1_i] == 0) return -1;
+  if ((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i][l1_i] == 0) return -4;
 
   if ((uint64_t)chunk_tree_root[l4_i][l3_i][l2_i][l1_i] & 1) {
     physicalAddress->physical_addr =
@@ -253,7 +258,7 @@ int BTRFS_TranslateLogicalAddress(uint64_t logicalAddress,
     return 0;
   }
 
-  return -1;
+  return -5;
 }
 
 int BTRFS_StartParser(void) {
@@ -264,6 +269,8 @@ int BTRFS_StartParser(void) {
 
   if (BTRFS_ParseSuperblock(sblock) != 0) return -2;
 
-  BTRFS_ParseChunkTree();
-  BTRFS_ParseRootTree();
+  int err = 0;
+  if((err = BTRFS_ParseChunkTree()) != 0) return err;
+  if(BTRFS_ParseRootTree() != 0) return -4;
+  return 0;
 }
